@@ -65,7 +65,8 @@ contract Pot is Ownable {
 
     // e when closing contest after 90 days, the contest manager will get 10% of the remaining rewards and the rest will be divided equally between the players
     // q possible reentracy issue, because we are not updating neither the remainingRewards nor the i_deployedAt after the first call
-    function closePot() external onlyOwner {
+    // @audit since the owner of this contract is the ContestManager, contestManager would not be able to actually claim the managerCut
+    function closePot(address manager) external onlyOwner {
         if (block.timestamp - i_deployedAt < 90 days) {
             revert Pot__StillOpenForClaim();
         }
@@ -73,8 +74,9 @@ contract Pot is Ownable {
             // @audit - we should use some precision in order to calculate the managerCut because this way we can lose some rewards due to solidity floor division
             uint256 managerCut = remainingRewards / managerCutPercent;
             // i_deployedAt = block.timestamp;
-            i_token.transfer(msg.sender, managerCut);
+            i_token.transfer(manager, managerCut);
 
+            // @audit - should be distrubuted through the `cliamants` array instead of `players` array
             uint256 claimantCut = (remainingRewards - managerCut) / i_players.length; // (15 - 1.5) / 3 = 4.5
             // we can do a memory copy of `claimants` array and then iterate over it
             address[] memory _claimants = claimants;

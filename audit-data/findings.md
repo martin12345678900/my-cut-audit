@@ -92,7 +92,92 @@ Recommended Mitigation:
 - One way would be do check inside the constructor if the totalRewards passed is `>=` the rewards calculated in the `rewards[]` array.
 - Another way would be to not rely at all at `totalRewards` and do the calculation of totalRewards internally inside the `Pot` contract.
 
-[H-3] Precision Loss in `Pot::closePot` `managerCut` Calculation Leading to Lost Rewards
+
+[H-3] TITLE (Root Cause + Impact)
+
+Description: In the `Pot::closePot` function, the manager cut (managerCut) is transferred to `msg.sender`, which is the `ContestManager` contract itself. This results in the `managerCut` being transferred to the `ContestManager` contract instead of the actual owner (the user who deployed the contract). The `ContestManager` contract does not provide any mechanism for transferring or withdrawing the managerCut to the actual owner, effectively locking the funds inside the contract.
+
+Impact: The owner of the ContestManager (the user who deployed it) has no way of withdrawing the `managerCut` from the contract, resulting in a significant loss of rewards that should belong to the owner.
+
+Proof of Concept: 
+This issue could be proved by running this test case inside `TestMyCut.t.sol`.
+
+```javascript
+    function testManagerCutGoesToManagerContestContractInsteadToManagerUser() mintAndApproveTokens public {
+        address[] memory _players = new address[](3);
+        address p1 = makeAddr("p1");
+        address p2 = makeAddr("p2");
+        address p3 = makeAddr("p3");
+
+        _players[0] = p1;
+        _players[1] = p2;
+        _players[2] = p3;
+
+        rewards = [100e18, 150e18, 200e18];
+        totalRewards = 450e18;
+
+        vm.startPrank(user);
+        contest = ContestManager(conMan).createContest(_players, rewards, IERC20(ERC20Mock(weth)), totalRewards);
+        ContestManager(conMan).fundContest(0);
+        vm.stopPrank();
+
+        vm.prank(p1);
+        Pot(contest).claimCut();
+
+        uint256 balanceOfContestManagerContractBefore = ERC20Mock(weth).balanceOf(conMan);
+        uint256 balanceOfUserBefore = ERC20Mock(weth).balanceOf(user);
+ 
+        vm.warp(91 days);
+        vm.startPrank(user);
+        ContestManager(conMan).closeContest(contest);
+        vm.stopPrank();
+
+        uint256 remainingRewards = Pot(contest).getRemainingRewards();
+        uint256 managerCut = remainingRewards / managerCutPercent;
+
+        uint256 balanceOfContestManagerContractAfter = ERC20Mock(weth).balanceOf(conMan);
+        uint256 balanceOfUserAfter = ERC20Mock(weth).balanceOf(user);
+
+        // e after closing the pot, the balance of user didn't change, instead of that the balance of the contest maanger contract increased by the manager cut
+        assert(balanceOfUserBefore == balanceOfUserAfter);
+        assert(balanceOfContestManagerContractAfter == balanceOfContestManagerContractBefore + managerCut);
+    }
+```
+
+Recommended Mitigation:
+- One possible solution would be to transfer the managerCut tokens to the owner isntead of the `msg.sender` inside the `Pot::closePot` function.
+- Another possible solution would be to implement a mechanism which allows the owner to withdraw the managerCut funds to himself from the `ContestManager` contract.
+
+```diff
+    function _closeContest(address contest) internal {
+        Pot pot = Pot(contest);
+-        pot.closePot();
++        pot.closePot(msg.sender);
+    }
+```
+
+```diff
+-    function closePot() external onlyOnwer {
++    function closePot(address manager) external onlyOwner {
+        if (block.timestamp - i_deployedAt < 90 days) {
+            revert Pot__StillOpenForClaim();
+        }
+        if (remainingRewards > 0) {
+            uint256 managerCut = remainingRewards / managerCutPercent;
+-            i_token.transfer(msg.sender, managerCut);
++            i_token.transfer(manager, managerCut);
+
+            uint256 claimantCut = (remainingRewards - managerCut) / i_players.length; // (15 - 1.5) / 3 = 4.5
+            address[] memory _claimants = claimants;
+            for (uint256 i = 0; i < _claimants.length; i++) {
+                _transferReward(_claimants[i], claimantCut);
+            }
+        }
+    }
+```
+
+
+[H-4] Precision Loss in `Pot::closePot` `managerCut` Calculation Leading to Lost Rewards
 
 Description: In the `Pot::closePot` function, the calculation of `managerCut` uses integer division, which results in a loss of precision due to Solidity’s truncation of decimal points. The line `uint256 managerCut = remainingRewards / managerCutPercent;` divides `remainingRewards` by `managerCutPercent` without accounting for decimal values, leading to potential loss of a portion of the rewards. This precision issue can result in a situation where some rewards remain unallocated.
 

@@ -56,6 +56,6 @@ contract ContestManager is Ownable {
 
     function _closeContest(address contest) internal {
         Pot pot = Pot(contest);
-        pot.closePot();
+        pot.closePot(msg.sender);
     }
 }

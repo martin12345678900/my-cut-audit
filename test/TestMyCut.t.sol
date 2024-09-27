@@ -23,6 +23,8 @@ contract TestMyCut is Test {
     address user = makeAddr("user");
     uint256 totalRewards = 4;
 
+    uint256 private constant managerCutPercent = 10;
+
     function setUp() public {
         vm.startPrank(user);
         // DeployContestManager deploy = new DeployContestManager();
@@ -87,12 +89,12 @@ contract TestMyCut is Test {
         // player balance before
         uint256 balanceBefore = ERC20Mock(weth).balanceOf(player1);
 
-        address randomPlayer = makeAddr("randomPlayer");
-        vm.startPrank(randomPlayer);
+
+        vm.startPrank(player1);
         Pot(contest).claimCut();
         vm.stopPrank();
 
-        uint256 balanceAfter = ERC20Mock(weth).balanceOf(randomPlayer);
+        uint256 balanceAfter = ERC20Mock(weth).balanceOf(player1);
         assert(balanceAfter > balanceBefore);
     }
 
@@ -289,5 +291,51 @@ contract TestMyCut is Test {
             vm.prank(user);
             ContestManager(conMan).closeContest(contest);
         }
+    }
+
+    function testManagerCutGoesToManagerContestContractInsteadToManagerUser() mintAndApproveTokens public {
+        address[] memory _players = new address[](3);
+        address p1 = makeAddr("p1");
+        address p2 = makeAddr("p2");
+        address p3 = makeAddr("p3");
+
+        _players[0] = p1;
+        _players[1] = p2;
+        _players[2] = p3;
+
+        rewards = [100e18, 150e18, 200e18];
+        totalRewards = 450e18;
+
+        vm.startPrank(user);
+        contest = ContestManager(conMan).createContest(_players, rewards, IERC20(ERC20Mock(weth)), totalRewards);
+        ContestManager(conMan).fundContest(0);
+        vm.stopPrank();
+
+        vm.prank(p1);
+        Pot(contest).claimCut();
+
+        uint256 balanceOfContestManagerContractBefore = ERC20Mock(weth).balanceOf(conMan);
+        uint256 balanceOfUserBefore = ERC20Mock(weth).balanceOf(user);
+
+        console.log("balanceOfContestManagerContractBefore: ", balanceOfContestManagerContractBefore);
+        console.log("balanceOfUserBefore: ", balanceOfUserBefore);
+ 
+        vm.warp(91 days);
+        vm.startPrank(user);
+        ContestManager(conMan).closeContest(contest);
+        vm.stopPrank();
+
+        uint256 remainingRewards = Pot(contest).getRemainingRewards();
+        uint256 managerCut = remainingRewards / managerCutPercent;
+
+        uint256 balanceOfContestManagerContractAfter = ERC20Mock(weth).balanceOf(conMan);
+        uint256 balanceOfUserAfter = ERC20Mock(weth).balanceOf(user);
+
+        console.log("balanceOfContestManagerContractAfter: ", balanceOfContestManagerContractAfter);
+        console.log("balanceOfUserAfter: ", balanceOfUserAfter);
+
+        // e after closing the pot, the balance of user didn't change, instead of that the balance of the contest maanger contract increased by the manager cut
+        assert(balanceOfUserBefore == balanceOfUserAfter);
+        assert(balanceOfContestManagerContractAfter == balanceOfContestManagerContractBefore + managerCut);
     }
 }
