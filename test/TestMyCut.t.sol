@@ -12,6 +12,8 @@ contract TestMyCut is Test {
     address conMan;
     address player1 = makeAddr("player1");
     address player2 = makeAddr("player2");
+    // address player3 = makeAddr("player3");
+    // address[] players = [player1, player2, player3];
     address[] players = [player1, player2];
     uint256 public constant STARTING_USER_BALANCE = 1000 ether;
     ERC20Mock weth;
@@ -74,6 +76,23 @@ contract TestMyCut is Test {
         vm.stopPrank();
         // player balance after
         uint256 balanceAfter = ERC20Mock(weth).balanceOf(player1);
+        assert(balanceAfter > balanceBefore);
+    }
+
+    function testCantClaimCut() public mintAndApproveTokens {
+        vm.startPrank(user);
+        contest = ContestManager(conMan).createContest(players, rewards, IERC20(ERC20Mock(weth)), 4);
+        ContestManager(conMan).fundContest(0);
+        vm.stopPrank();
+        // player balance before
+        uint256 balanceBefore = ERC20Mock(weth).balanceOf(player1);
+
+        address randomPlayer = makeAddr("randomPlayer");
+        vm.startPrank(randomPlayer);
+        Pot(contest).claimCut();
+        vm.stopPrank();
+
+        uint256 balanceAfter = ERC20Mock(weth).balanceOf(randomPlayer);
         assert(balanceAfter > balanceBefore);
     }
 
@@ -182,5 +201,93 @@ contract TestMyCut is Test {
         uint256 claimantBalanceAfter = ERC20Mock(weth).balanceOf(player1);
 
         assert(claimantBalanceAfter > claimantBalanceBefore);
+    }
+
+    function testCreateContestWithDifferentCountOfPlayersAndRewards() public {
+        address[] memory _players = new address[](3);
+        address p1 = makeAddr("p1");
+        address p2 = makeAddr("p2");
+        address p3 = makeAddr("p3");
+
+        _players[0] = p1;
+        _players[1] = p2;
+        _players[2] = p3;
+
+        vm.prank(user);
+        vm.expectRevert();
+        // array out-of-bounds access (0x32)
+        contest = ContestManager(conMan).createContest(_players, rewards, IERC20(ERC20Mock(weth)), 4);
+    }
+
+    function testContestWithLessTotalRewardsThanTotalInsideRewardsArray() mintAndApproveTokens public {
+        address[] memory _players = new address[](3);
+        address p1 = makeAddr("p1");
+        address p2 = makeAddr("p2");
+        address p3 = makeAddr("p3");
+
+        _players[0] = p1;
+        _players[1] = p2;
+        _players[2] = p3;
+
+        rewards = [100e18, 150e18, 200e18];
+        totalRewards = 150e18;
+
+        vm.startPrank(user);
+        contest = ContestManager(conMan).createContest(_players, rewards, IERC20(ERC20Mock(weth)), totalRewards);
+        ContestManager(conMan).fundContest(0);
+        vm.stopPrank();
+
+        vm.prank(p1);
+        Pot(contest).claimCut();
+
+        vm.prank(p2);
+        vm.expectRevert();
+        Pot(contest).claimCut();
+    }
+
+    function testCanCloseContestMultipleTimes() public mintAndApproveTokens {
+        address[] memory _players = new address[](3);
+        address p1 = makeAddr("p1");
+        address p2 = makeAddr("p2");
+        address p3 = makeAddr("p3");
+
+        _players[0] = p1;
+        _players[1] = p2;
+        _players[2] = p3;
+
+        rewards = [100e18, 150e18, 200e18];
+        totalRewards = 450e18;
+
+        vm.startPrank(user);
+        // create the contest
+        contest = ContestManager(conMan).createContest(_players, rewards, IERC20(ERC20Mock(weth)), totalRewards);
+        // fund it with 450 WETH
+        ContestManager(conMan).fundContest(0);
+        vm.stopPrank();
+
+        // Player 1 claims his cut (100 WETH)
+        vm.startPrank(p1);
+        Pot(contest).claimCut();
+        vm.stopPrank();
+
+        // Players 3 claims his cut (200 WETH)
+        vm.startPrank(p3);
+        Pot(contest).claimCut();
+        vm.stopPrank();
+        
+
+        // we have left 150 WETH - 15 WETH for the manager and 135 WETH for the players (135 / 3 = 45 WETH per player)
+        vm.warp(91 days);
+        vm.prank(user);
+        ContestManager(conMan).closeContest(contest); // 630 / 3 = 210
+        
+        // Once we fund the contest we can close the contest multiple times since all the rewards are claimed
+        vm.prank(user);
+        ContestManager(conMan).fundContest(0);
+
+        while(ERC20Mock(weth).balanceOf(contest) > Pot(contest).getRemainingRewards()) {
+            vm.prank(user);
+            ContestManager(conMan).closeContest(contest);
+        }
     }
 }
